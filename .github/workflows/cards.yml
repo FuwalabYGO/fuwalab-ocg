@@ -1,0 +1,34 @@
+name: Cartes
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency: cards
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/cards.yml/enable" || true
+      - run: node ocg/sync.mjs
+      - id: v
+        run: node ocg/release.mjs >> "$GITHUB_OUTPUT"
+      - name: Publier
+        run: |
+          if gh release view "${{ steps.v.outputs.tag }}" > /dev/null 2>&1; then echo "Déjà publié"; exit 0; fi
+          gh release create "${{ steps.v.outputs.tag }}" --title "${{ steps.v.outputs.title }}" --notes-file notes.md --latest \
+            ocg/vendor/versions.json ocg/vendor/cards.json ocg/vendor/texts.json ocg/vendor/strings.json ocg/vendor/scripts-index.json ocg/vendor/scripts.pack
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | grep '^cards-' | tail -n +6 | xargs -r -I{} gh release delete {} --yes --cleanup-tag

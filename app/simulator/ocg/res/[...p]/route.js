@@ -1,4 +1,4 @@
-import { readFile, open } from 'node:fs/promises'
+import { readFile, open, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export const dynamic = 'force-dynamic'
@@ -9,9 +9,15 @@ const VENDOR = join(OCG, 'vendor')
 const CODE_FILES = /^(worker|engine)\.js$|^core\/[\w.-]+\.js$/
 const DATA_FILES = new Set(['cards.json', 'texts.json', 'strings.json'])
 let index = null
+let indexMtime = 0
 
 async function scriptIndex() {
-  if (!index) index = JSON.parse(await readFile(join(VENDOR, 'scripts-index.json'), 'utf8'))
+  const file = join(VENDOR, 'scripts-index.json')
+  const mtime = (await stat(file)).mtimeMs
+  if (!index || mtime !== indexMtime) {
+    index = JSON.parse(await readFile(file, 'utf8'))
+    indexMtime = mtime
+  }
   return index
 }
 

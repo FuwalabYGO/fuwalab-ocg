@@ -2,12 +2,13 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { OCG_SOURCE_URL as repoUrl } from '../app/simulator/ocg/license.js'
 
 const OCG = dirname(fileURLToPath(import.meta.url))
 const APP = join(OCG, '..')
 const GIT = process.env.OCG_GIT_DIR || join(tmpdir(), 'fuwalab-ocg')
 const DEST = process.argv[2] ? resolve(process.argv[2]) : null
-const OCG_FILES = ['LICENSE', 'README.md', 'engine.js', 'worker.js', 'sync.mjs', 'test-node.mjs', 'export.mjs']
+const OCG_FILES = ['LICENSE', 'README.md', '.gitignore', 'engine.js', 'worker.js', 'sync.mjs', 'test-node.mjs', 'export.mjs', 'update.mjs', 'release.mjs']
 
 if (!DEST) {
   console.warn('[ocg-export] usage : node ocg/export.mjs <dossier du dépôt public>')
@@ -36,10 +37,6 @@ function licenseText() {
 }
 
 function readme(v) {
-  const repo = (n) => {
-    const r = v.repos[n]
-    return r.commit ? `[${n}](${r.url}) @ [\`${r.commit.slice(0, 10)}\`](${r.url}/tree/${r.commit}) (${r.date})` : `[${n}](${r.url})`
-  }
   return `# fuwalab-ocg
 
 Rules engine integration used by the automatic mode of the FUWALAB duel simulator.
@@ -59,12 +56,9 @@ It is published to comply with the AGPL-3.0, because the simulator runs and serv
 
 ## Exact versions used
 
-- Core: ${v.core.name} ${v.core.version}, built from [ygopro-core](${v.core.core})
-- ${repo('CardScripts')}
-- ${repo('BabelCDB')}
-- Generated: ${v.generatedAt}
+Card data is rebuilt daily by the [Cartes workflow](.github/workflows/cards.yml) and published as a [release](${repoUrl}/releases/latest). Each release lists the exact CardScripts and BabelCDB commits it was built from, and the live site downloads the latest one.
 
-Full details in [ocg/vendor/versions.json](ocg/vendor/versions.json).
+- Core: ${v.core.name} ${v.core.version}, built from [ygopro-core](${v.core.core})
 
 ## Contents
 
@@ -72,7 +66,7 @@ Full details in [ocg/vendor/versions.json](ocg/vendor/versions.json).
 - \`ocg/core/\`: unmodified build of ${v.core.name} ${v.core.version}.
 - \`app/simulator/ocg/\`: React hook and panel connecting the engine to the simulator, and the route serving engine files.
 
-Card scripts and databases are not copied here: \`node ocg/sync.mjs\` downloads them from the repositories above and packs them into \`ocg/vendor/\`. The commits used by the live site are listed above.
+Card scripts and databases are not copied here: \`node ocg/sync.mjs\` downloads them from the repositories above and packs them into \`ocg/vendor/\`. \`ocg/update.mjs\` downloads the latest release on the live server.
 
 The rest of the simulator interface communicates with the engine through Web Worker messages only.
 
@@ -84,10 +78,12 @@ const v = readVersions()
 const license = licenseText()
 mkdirSync(DEST, { recursive: true })
 for (const f of readdirSync(DEST)) if (f !== '.git') rmSync(join(DEST, f), { recursive: true, force: true })
-mkdirSync(join(DEST, 'ocg', 'vendor'), { recursive: true })
+mkdirSync(join(DEST, 'ocg'), { recursive: true })
+mkdirSync(join(DEST, '.github', 'workflows'), { recursive: true })
 for (const f of OCG_FILES) cpSync(join(OCG, f), join(DEST, 'ocg', f))
 cpSync(join(OCG, 'core'), join(DEST, 'ocg', 'core'), { recursive: true })
-cpSync(join(OCG, 'vendor', 'versions.json'), join(DEST, 'ocg', 'vendor', 'versions.json'))
+cpSync(join(OCG, 'ci', 'cards.yml'), join(DEST, '.github', 'workflows', 'cards.yml'))
+writeFileSync(join(DEST, '.gitignore'), 'notes.md\n')
 cpSync(join(APP, 'app', 'simulator', 'ocg'), join(DEST, 'app', 'simulator', 'ocg'), { recursive: true })
 writeFileSync(join(DEST, 'LICENSE'), license)
 writeFileSync(join(DEST, 'README.md'), readme(v))

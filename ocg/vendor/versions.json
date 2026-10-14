@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-10-14T12:37:26.658Z",
+  "license": "AGPL-3.0-or-later",
+  "core": {
+    "name": "@n1xx1/ocgcore-wasm",
+    "version": "0.1.2",
+    "url": "https://github.com/n1xx1/ocgcore-wasm",
+    "core": "https://github.com/edo9300/ygopro-core"
+  },
+  "repos": {
+    "CardScripts": {
+      "url": "https://github.com/ProjectIgnis/CardScripts",
+      "commit": "b5a9480fa111cac197d0a541e6243e8619ab4c52",
+      "date": "2026-10-14T15:28:25+03:00"
+    },
+    "BabelCDB": {
+      "url": "https://github.com/ProjectIgnis/BabelCDB",
+      "commit": "70e49a14dd2dcba7855efb37a371473655cb800e",
+      "date": "2026-10-13T18:25:16-07:00"
+    }
+  },
+  "strings": {
+    "url": "https://raw.githubusercontent.com/ProjectIgnis/Distribution/master/config/strings.conf",
+    "fetchedAt": null
+  }
+}

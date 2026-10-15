@@ -1,21 +1,25 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { isExtraDeckCard, isPendulumCard, tL, simLang, effectiveAtk, effectiveDef, OCG_PILES } from '../gameEngine'
+import { isExtraDeckCard, isPendulumCard, tL, simLang, effectiveAtk, effectiveDef, OCG_PILES, cardName } from '../gameEngine'
 import { SYS_FR, LOC_FR } from './sysFr'
 import { stateChecksum } from '../replay'
+import { OCG_CORE_ID } from './license'
+import { trackUids } from './track'
 
 export const OCG_RES = '/simulator/ocg/res/'
 export const LOC = { DECK: 1, HAND: 2, MZONE: 4, SZONE: 8, GRAVE: 16, REMOVED: 32, EXTRA: 64, OVERLAY: 128 }
 const PHASE_KEY = { 1: 'DP', 2: 'SP', 4: 'M1', 8: 'BP', 16: 'BP', 32: 'BP', 64: 'BP', 128: 'BP', 256: 'M2', 512: 'EP' }
 const LISTS = [[LOC.DECK, 'deckList'], [LOC.HAND, 'hand'], [LOC.MZONE, 'mzone'], [LOC.SZONE, 'szone'], [LOC.GRAVE, 'grave'], [LOC.REMOVED, 'removed'], [LOC.EXTRA, 'extra']]
 const PROGRESS_MSGS = new Set([50, 53, 54, 60, 62, 64, 70, 100])
+const UNDO_POINTS = new Set([10, 11, 12, 16])
 const PILE = { [LOC.DECK]: 'mainDeck', [LOC.HAND]: 'hand', [LOC.GRAVE]: 'graveyard', [LOC.REMOVED]: 'banished', [LOC.EXTRA]: 'extraDeck' }
 
 let VIEW = 0
 let ME = 0
 const keyOf = (c) => `${c.controller}:${c.location}:${c.sequence}`
 const normLoc = (l) => (l & LOC.OVERLAY ? LOC.OVERLAY : l)
+const locOf = (c) => (c?.overlay_sequence != null ? LOC.OVERLAY : normLoc(c?.location || 0))
 const oppName = (name) => `opp${name[0].toUpperCase()}${name.slice(1)}`
 
 export function simPlace(p, loc, seq, view = VIEW) {
@@ -74,10 +78,17 @@ function slotsOf(board) {
   return out
 }
 
-function assignUids(prev, slots, moves, mint) {
+function assignUids(prev, slots, moves, mint, msgs = []) {
   const out = new Map()
   const used = new Set()
+  const tracked = trackUids(prev, msgs)
+  const codeOf = new Map([...prev.values()].map(v => [v.uid, v.code]))
   for (const sl of slots) {
+    const uid = tracked.get(sl.key)
+    if (uid && !used.has(uid) && codeOf.get(uid) === sl.code) { out.set(sl.key, uid); used.add(uid) }
+  }
+  for (const sl of slots) {
+    if (out.has(sl.key)) continue
     const old = prev.get(sl.key)
     if (old && old.code === sl.code && !used.has(old.uid)) { out.set(sl.key, old.uid); used.add(old.uid) }
   }
@@ -253,6 +264,8 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
   const chainRef = useRef([])
   const [texts, setTexts] = useState(null)
   const [strings, setStrings] = useState(null)
+  const [i18n, setI18n] = useState(null)
+  const byNameRef = useRef(null)
   const workerRef = useRef(null)
   const cardsRef = useRef(new Map())
   const prevRef = useRef(new Map())
@@ -266,16 +279,24 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
   const metaRef = useRef(null)
   const respRef = useRef([])
   const forkRef = useRef(false)
+  const cutRef = useRef(null)
+  const cutNewRef = useRef([])
+  const snapsRef = useRef([])
+  const promptRef = useRef(null)
+  const [undoCount, setUndoCount] = useState(0)
 
   const frameOf = (state, lines, fullState, events) => {
     if (!encRef.current) return null
     const extra = {}
     if (events?.length) extra.x = events
     if (respRef.current.length) extra.r = jsonSafe(respRef.current)
-    if (metaRef.current && !metaRef.current.done) extra.o = { seed: metaRef.current.seed, decks: metaRef.current.decks, ...(metaRef.current.hands ? { hands: metaRef.current.hands } : {}), ...(ME ? { me: ME } : {}) }
+    const cut = cutRef.current
+    if (cut != null) extra.c = cut
+    if (metaRef.current && !metaRef.current.done) extra.o = { core: OCG_CORE_ID, seed: metaRef.current.seed, decks: metaRef.current.decks, ...(metaRef.current.hands ? { hands: metaRef.current.hands } : {}), ...(ME ? { me: ME } : {}) }
     const frame = encRef.current(state, lines, Object.keys(extra).length ? extra : null, fullState)
     if (frame) {
-      respRef.current = []
+      respRef.current = cut != null ? cutNewRef.current : []
+      if (cut != null) { cutRef.current = null; cutNewRef.current = [] }
       if (extra.o) metaRef.current.done = true
     }
     return frame
@@ -323,10 +344,15 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
   const loadTexts = useCallback(async () => {
     if (textsRef.current) return
     try {
-      const [t, st] = await Promise.all([fetch(OCG_RES + 'texts.json').then(r => r.json()), fetch(OCG_RES + 'strings.json').then(r => r.json())])
+      const [t, st, tr] = await Promise.all([
+        fetch(OCG_RES + 'texts.json').then(r => r.json()),
+        fetch(OCG_RES + 'strings.json').then(r => r.json()),
+        fetch(OCG_RES + 'i18n.json').then(r => (r.ok ? r.json() : null)).catch(e => { console.warn('[ocg] i18n', e); return null }),
+      ])
       textsRef.current = t
       setTexts(t)
       setStrings(st)
+      setI18n(tr)
     } catch (e) {
       console.warn('[ocg] textes', e)
     }
@@ -336,8 +362,36 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
 
   const nm = useCallback((code) => {
     const c = cardsRef.current.get(code)
-    return c?._frName || c?.name || textsRef.current?.[code]?.[0] || `#${code}`
+    return (c && cardName(c)) || textsRef.current?.[code]?.[0] || `#${code}`
   }, [])
+
+  const sysText = useCallback((n) => {
+    const l = simLang()
+    return (l === 'fr' && SYS_FR[n]) || i18n?.[l]?.sys?.[n]?.trim() || strings?.system?.[n] || ''
+  }, [i18n, strings])
+
+  const nameIn = useCallback((en) => {
+    if (!byNameRef.current && textsRef.current) {
+      byNameRef.current = new Map()
+      for (const [code, t] of Object.entries(textsRef.current)) if (t?.[0]) byNameRef.current.set(t[0].toLowerCase(), Number(code))
+    }
+    const code = byNameRef.current?.get(en.toLowerCase())
+    const c = code && cardsRef.current.get(code)
+    return (c && cardName(c)) || en
+  }, [])
+
+  const trEff = useCallback((en) => {
+    const tbl = i18n?.[simLang()]?.eff
+    if (!tbl || !en) return en
+    const qs = []
+    const nums = []
+    const k = en.trim().replace(/"[^"]*"/g, (m) => { qs.push(m.slice(1, -1)); return '"X"' }).replace(/\d+/g, (m) => { nums.push(m); return 'N' })
+    const tpl = tbl[k]
+    if (!tpl) return en
+    let i = 0
+    let j = 0
+    return tpl.replace(/\{N\}|\{X\}/g, (m) => (m === '{N}' ? nums[i++] ?? '' : `"${nameIn(qs[j++] ?? '')}"`))
+  }, [i18n, nameIn])
 
   const locName = useCallback((loc) => {
     const l = Number(loc) || 0
@@ -345,24 +399,24 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
     if (!bit) return ''
     if (simLang() === 'fr') return LOC_FR[bit] || ''
     const idx = { 1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 5, 64: 6, 128: 7, 256: 8, 512: 9 }[bit]
-    return strings?.system?.[1000 + idx] || ''
-  }, [strings])
+    return sysText(1000 + idx)
+  }, [sysText])
 
   const desc = useCallback((d, card, loc) => {
     const v = BigInt(d ?? 0)
     let out
     if (v < 1048576000n) {
       const n = Number(v)
-      out = !n ? tL('Activer', 'Activate', 'Activar') : (simLang() === 'fr' && SYS_FR[n]) || strings?.system?.[n] || (n > 10000 ? nm(n) : `#${n}`)
+      out = !n ? tL('Activer', 'Activate', 'Activar') : sysText(n) || (n > 10000 ? nm(n) : `#${n}`)
     } else {
       const c = Number(v >> 20n)
       const i = Number(v & 0xfffffn)
-      out = textsRef.current?.[c]?.[1]?.[i] || (i ? tL(`Effet ${i + 1}`, `Effect ${i + 1}`, `Efecto ${i + 1}`) : tL('Activer', 'Activate', 'Activar'))
+      out = trEff(textsRef.current?.[c]?.[1]?.[i]) || (i ? tL(`Effet ${i + 1}`, `Effect ${i + 1}`, `Efecto ${i + 1}`) : tL('Activer', 'Activate', 'Activar'))
     }
     if (!card) return out
     let k = 0
     return out.replace(/\[%ls\]/g, '%ls').replace(/%ls/g, () => (k++ === 0 ? nm(card) : locName(loc)))
-  }, [strings, nm, locName])
+  }, [sysText, trEff, nm, locName])
 
   const logLine = useCallback((m, codeAt) => {
     const who = (p) => (p === ME ? tL('Toi', 'You', 'Tú') : tL('Adv.', 'Opp.', 'Rival'))
@@ -399,8 +453,8 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
       case 83: return m.cards?.length ? [tL(`Ciblée(s) : ${m.cards.map(cardAt).join(', ')}`, `Targeted: ${m.cards.map(cardAt).join(', ')}`, `Objetivo(s): ${m.cards.map(cardAt).join(', ')}`), 'action'] : null
       case 32: return [tL(`${who(m.player)} mélange son Deck`, `${who(m.player)} shuffles their Deck`, `${who(m.player)} baraja su Deck`), 'system']
       case 50: {
-        const from = normLoc(m.from.location)
-        const to = normLoc(m.to.location)
+        const from = locOf(m.from)
+        const to = locOf(m.to)
         if (!m.card || from === to || from === LOC.OVERLAY) return null
         const where = {
           [LOC.GRAVE]: tL('au Cimetière', 'to the GY', 'al Cementerio'),
@@ -421,11 +475,11 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
     if (msgs.some(m => PROGRESS_MSGS.has(m.type))) progressRef.current++
     const moves = []
     for (const m of msgs) {
-      if (m.type === 50 && m.card) moves.push({ code: m.card, from: normLoc(m.from.location), to: normLoc(m.to.location) })
+      if (m.type === 50 && m.card) moves.push({ code: m.card, from: locOf(m.from), to: locOf(m.to) })
       if (m.type === 90) for (const d of m.drawn || []) moves.push({ code: d.code, from: LOC.DECK, to: LOC.HAND })
     }
     const slots = slotsOf(board)
-    const uids = assignUids(prevRef.current, slots, moves, () => `ocg_${++seqRef.current}`)
+    const uids = assignUids(prevRef.current, slots, moves, () => `ocg_${++seqRef.current}`, msgs)
     prevRef.current = new Map(slots.map(sl => [sl.key, { uid: uids.get(sl.key), code: sl.code, loc: sl.loc }]))
     uidsRef.current = uids
     boardRef.current = board
@@ -447,7 +501,7 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
       if (initRef.current && !forkRef.current) dispatch({ type: 'INIT_GAME', payload: { ...initRef.current, ocg: true } })
       else fxa.push({ type: 'INIT_GAME' })
     }
-    const mineToHand = msgs.some(m => m.type === 50 && normLoc(m.to.location) === LOC.HAND && normLoc(m.from.location) !== LOC.HAND && (m.to.controller === VIEW || ctlRef.current.controlBoth))
+    const mineToHand = msgs.some(m => m.type === 50 && locOf(m.to) === LOC.HAND && locOf(m.from) !== LOC.HAND && (m.to.controller === VIEW || ctlRef.current.controlBoth))
     if (msgs.some(m => m.type === 90) || !mineToHand) fxa.push({ type: 'DRAW_CARD' })
     const PILE_OF = { [LOC.HAND]: 'hand', [LOC.GRAVE]: 'gy', [LOC.REMOVED]: 'ban', [LOC.EXTRA]: 'extra', [LOC.DECK]: 'deck' }
     const slotAt = (c) => slots.find(x => x.key === `${c.controller}:${normLoc(c.location)}:${c.sequence}`)
@@ -554,8 +608,21 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
         metaRef.current = { seed: data.seed, decks: data.decks, hands: data.hands || null, done: forkRef.current }
       } else if (data.t === 'state') {
         if (readyRef.current) { readyRef.current.resolve(); readyRef.current = null; setLoadStep(null) }
-        if (data.resp?.length) respRef.current.push(...data.resp)
+        if (data.cut != null) {
+          const snap = snapsRef.current.pop()
+          if (snap) {
+            logRef.current = snap.log
+            prevRef.current = snap.prev
+            chainRef.current = snap.chain
+            setChain(snap.chain)
+          }
+          cutRef.current = data.cut
+          cutNewRef.current = [...(data.resp || [])]
+        } else if (data.resp?.length) respRef.current.push(...data.resp)
+        snapsRef.current.length = Math.min(snapsRef.current.length, data.undo ?? 0)
+        setUndoCount(data.undo ?? 0)
         const missing = sync(data.board, data.log)
+        promptRef.current = data.prompt
         setPrompt(data.prompt)
         setPicked([])
         setPlaces([])
@@ -593,6 +660,11 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
     forkRef.current = !!fork
     metaRef.current = null
     respRef.current = []
+    cutRef.current = null
+    cutNewRef.current = []
+    snapsRef.current = []
+    promptRef.current = null
+    setUndoCount(0)
     encRef.current = init ? frameEncoder(new Set([...init.mainCards, ...init.extraCards, ...init.oppMainCards, ...init.oppExtraCards].map(c => Number(c.id)))) : null
     if (fork?.state && encRef.current) encRef.current(fork.state, [], null, fork.state)
     for (const c of cards) {
@@ -639,9 +711,17 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
 
   const respond = useCallback((response) => {
     if (!workerRef.current) return
+    if (UNDO_POINTS.has(promptRef.current?.type)) snapsRef.current.push({ log: logRef.current, prev: prevRef.current, chain: chainRef.current })
     setBusy(true)
     workerRef.current.postMessage({ t: 'respond', response })
   }, [])
+
+  const undo = useCallback(() => {
+    if (!workerRef.current || busy || !undoCount) return
+    clearInterval(ackRef.current)
+    setBusy(true)
+    workerRef.current.postMessage({ t: 'undo' })
+  }, [busy, undoCount])
 
   const setControlBoth = useCallback((v) => {
     ctlRef.current.controlBoth = v
@@ -923,7 +1003,7 @@ export function useOcgDuel({ dispatch, fxActionsRef, onDeclare, fxRemaining }) {
 
   return {
     active, busy, prompt, errors, ended, loadStep, controlBoth, quietChains, aiOpp, texts, chain, banner,
-    start, stop, respond, setControlBoth, setQuietChains, setAiOpp, swapped, setSwapped, reveal, setReveal,
+    start, stop, respond, undo, canUndo: !!undoCount && !busy && !ended, setControlBoth, setQuietChains, setAiOpp, swapped, setSwapped, reveal, setReveal,
     actions, optionsFor, pick, dropCard, candidates, picked, togglePick, pickIndex, clickCard, isPicked, pickFan,
     placeOptions, places, choosePlace, clickZone, phase, adjustHitmap, inter, nm, desc, cardOf,
     progress: progressRef.current,

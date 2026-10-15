@@ -53,6 +53,7 @@ export async function GET(req, { params }) {
     if (rel === 'bundle') return await bundle(req)
     if (CODE_FILES.test(rel)) return send(await readFile(join(OCG, rel)), 'text/javascript; charset=utf-8', 0)
     if (DATA_FILES.has(rel)) return send(await readFile(join(VENDOR, rel)), 'application/json; charset=utf-8', 3600)
+    if (rel === 'i18n.json') return send(await readFile(join(OCG, rel)), 'application/json; charset=utf-8', 3600)
     if (rel.startsWith('s/')) {
       const name = rel.slice(2)
       const entry = /^[\w.-]+\.lua$/.test(name) ? (await scriptIndex())[name] : null

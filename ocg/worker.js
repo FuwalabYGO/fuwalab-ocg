@@ -13,6 +13,10 @@ let pending = null
 let PAUSE = { pause: true, ai: true }
 let resps = []
 let sent = 0
+let codeList = null
+let marks = []
+const DECISIONS = new Set([10, 11, 12, 16])
+let setup = null
 
 const revive = (_k, v) => (typeof v === 'string' && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v)
 
@@ -75,14 +79,40 @@ function skipEmptyChain(res) {
   return { ...r, log }
 }
 
-function post(res) {
+function post(res, extra = null) {
   const out = skipEmptyChain(res)
   const has = (t) => out.log.some(m => m.type === t)
   const wait = has(72) ? 700 : has(MSG.CHAINING) ? 600 : has(MSG.NEW_TURN) ? 500 : has(MSG.ATTACK) ? 400 : has(MSG.NEW_PHASE) ? 320 : 220
   pending = out.auto || out.cont ? out : null
   const resp = resps.slice(sent)
   sent = resps.length
-  self.postMessage({ t: 'state', log: out.log, prompt: out.prompt, board: duel.board(), missing: [...missing], thinking: !!pending, wait, resp })
+  self.postMessage({ t: 'state', log: out.log, prompt: out.prompt, board: duel.board(), missing: [...missing], thinking: !!pending, wait, resp, undo: marks.length, ...extra })
+}
+
+function makeDuel() {
+  return createDuel(lib, {
+    ...setup,
+    readCard: (code) => cards[code] || null,
+    allCodes: () => (codeList ||= Object.keys(cards).map(Number).filter(c => !cards[c][0])),
+    readScript,
+    onError: (type, text) => self.postMessage({ t: 'core', type, text }),
+    onResponse: (r) => resps.push(r),
+  })
+}
+
+function undo() {
+  if (!duel || pending || !marks.length) return
+  const cut = marks.pop()
+  const keep = resps.slice(0, cut)
+  duel.destroy()
+  resps = []
+  duel = makeDuel()
+  const prompt = duel.fastForward(keep)
+  sent = resps.length
+  if (!prompt) return post(duel.run(null, autoPlayers, PAUSE), { cut })
+  const hint = duel.state.hints[prompt.player]
+  duel.state.hints[prompt.player] = null
+  self.postMessage({ t: 'state', log: [], prompt: { ...prompt, hint }, board: duel.board(), missing: [...missing], thinking: false, wait: 0, resp: [], undo: marks.length, cut })
 }
 
 function next() {
@@ -118,15 +148,9 @@ self.onmessage = async ({ data }) => {
       resps = []
       sent = 0
       const hands = data.hands || fork?.hands || null
-      duel = createDuel(lib, {
-        seed,
-        hands,
-        decks: [p0, p1],
-        readCard: (code) => cards[code] || null,
-        readScript,
-        onError: (type, text) => self.postMessage({ t: 'core', type, text }),
-        onResponse: (r) => resps.push(r),
-      })
+      marks = []
+      setup = { seed, hands, decks: [p0, p1] }
+      duel = makeDuel()
       self.postMessage({ t: 'unknown', codes: [...new Set([...p0.unknown, ...p1.unknown])] })
       self.postMessage({ t: 'meta', seed: seed.map(String), decks: data.decks, hands })
       if (!fork) {
@@ -145,7 +169,10 @@ self.onmessage = async ({ data }) => {
     } else if (data.t === 'next' && duel) {
       next()
     } else if (data.t === 'respond' && duel && !pending) {
+      if (DECISIONS.has(duel.state.lastPrompt?.type)) marks.push(resps.length)
       post(duel.run(data.response, autoPlayers, PAUSE))
+    } else if (data.t === 'undo') {
+      undo()
     } else if (data.t === 'control') {
       autoPlayers = data.controlBoth ? [] : [1 - me]
       quietChains = data.quietChains !== false

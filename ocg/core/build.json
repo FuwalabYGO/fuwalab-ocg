@@ -1,0 +1,12 @@
+{
+  "name": "ocgcore-wasm",
+  "version": "0.1.4",
+  "url": "https://github.com/n1xx1/ocgcore-wasm",
+  "commit": "2f79a462f3f2cba6a0ec0092ad024446490ded45",
+  "core": "https://github.com/edo9300/ygopro-core",
+  "coreCommit": "93eff32a9bfc65cc3a748c7cf8a8774c10260b7f",
+  "lua": "https://github.com/lua/lua",
+  "luaCommit": "75ea9ccbea7c4886f30da147fb67b693b2624c26",
+  "emscripten": "3.1.6",
+  "script": "ocg/build-core.sh"
+}

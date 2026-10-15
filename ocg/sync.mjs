@@ -12,7 +12,7 @@ const REPOS = {
   CardScripts: 'https://github.com/ProjectIgnis/CardScripts.git',
   BabelCDB: 'https://github.com/ProjectIgnis/BabelCDB.git',
 }
-const CORE = { name: '@n1xx1/ocgcore-wasm', version: '0.1.2', url: 'https://github.com/n1xx1/ocgcore-wasm', core: 'https://github.com/edo9300/ygopro-core' }
+const CORE = JSON.parse(readFileSync(join(ROOT, 'core', 'build.json'), 'utf8'))
 const STRINGS_URL = 'https://raw.githubusercontent.com/ProjectIgnis/Distribution/master/config/strings.conf'
 const SCRIPT_DIRS = ['', 'official', 'pre-release', 'unofficial']
 const CDB_SKIP = /rush|skills|goat/i

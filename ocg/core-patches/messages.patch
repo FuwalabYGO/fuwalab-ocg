@@ -1,0 +1,37 @@
+diff --git a/src/messages.ts b/src/messages.ts
+index fbef2fd..45cca0f 100644
+--- a/src/messages.ts
++++ b/src/messages.ts
+@@ -344,15 +344,17 @@ export function readMessage(reader: BufferReader): OcgMessage | null {
+           return ret;
+         })(),
+       };
+-    case OcgMessageType.SHUFFLE_SET_CARD:
++    case OcgMessageType.SHUFFLE_SET_CARD: {
++      const location = reader.u8() as OcgLocation;
++      const count = reader.u8();
++      const from = Array.from({ length: count }, () => parseInfoLocation(reader));
++      const to = Array.from({ length: count }, () => parseInfoLocation(reader));
+       return {
+         type,
+-        location: reader.u8() as OcgLocation,
+-        cards: Array.from({ length: reader.u32() }, () => ({
+-          from: parseInfoLocation(reader),
+-          to: parseInfoLocation(reader),
+-        })),
++        location,
++        cards: from.map((f, i) => ({ from: f, to: to[i] })),
+       };
++    }
+     case OcgMessageType.REVERSE_DECK:
+       return {
+         type,
+@@ -688,7 +690,7 @@ export function readMessage(reader: BufferReader): OcgMessage | null {
+         type,
+         player: reader.u8(),
+         count: reader.u8(),
+-        available: reader.u8() as OcgAttribute,
++        available: reader.u32() as OcgAttribute,
+       };
+     case OcgMessageType.ANNOUNCE_CARD:
+       return {
